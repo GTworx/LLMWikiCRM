@@ -44,6 +44,16 @@ crm-data/                      ← its own git repo; every write is a commit
 - **Bi-directional**: you can also edit the markdown directly (VS Code, Obsidian, `git pull`); the UI picks up changes immediately. Each record's History panel shows git commits and diffs.
 - **Auth**: passwordless. You enter your email and receive a 6-digit code plus a magic link via Brevo. Both are a signed, 10-minute, single-use token. Sessions are HTTP-only cookies and are re-checked against the user file on every request. `assigned_accounts` on a user limits which accounts they can see (empty = all).
 
+## Importing a bootcamp cohort
+
+`scripts/import-course.mjs` imports a course repo's `reports/data.json` and `reports/*.md` as one account. Each participant becomes a contact, and each weekly session plus each report becomes a timeline entry. Ollama then writes a profile for each participant.
+
+```bash
+node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --name="Agentic AI Sooezy – Season 3" --rep=you@company.com
+```
+
+`--phase=a` runs only the exact import, and `--phase=b` runs only the LLM profiles. `--force` regenerates profiles that were already written. The script refuses to run if the account already exists.
+
 ## Limitations
 
 - Single-process: the job queue, rate limits and used-token list live in memory. Run one instance.
