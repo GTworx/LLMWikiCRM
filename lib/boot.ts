@@ -4,6 +4,7 @@ import { commitAll, ensureRepo } from './git';
 import { DEFAULT_PROMPT, PROMPT_FILE } from './llm';
 import { loadJobHistory, startWatchers } from './ingest';
 import { findUser, upsertUser } from './users';
+import { activeEndpoint } from './llm-settings';
 import { singleton, writeLock } from './util';
 
 export async function boot() {
@@ -26,5 +27,5 @@ export async function boot() {
   }
   await loadJobHistory();
   await startWatchers();
-  console.log(`[crm] wiki at ${DATA_DIR}, model ${config.ollamaModel}`);
+  console.log(`[crm] wiki at ${DATA_DIR}, LLM ${(await activeEndpoint().catch((e) => ({ label: `unavailable (${e.message})` }))).label}`);
 }

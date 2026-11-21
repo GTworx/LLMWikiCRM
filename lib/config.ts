@@ -7,6 +7,7 @@ export const ARCHIVE_DIR = path.join(DATA_DIR, '.archive');
 export const SYSTEM_DIR = path.join(DATA_DIR, '.system');
 export const USERS_DIR = path.join(SYSTEM_DIR, 'users');
 export const PROMPTS_DIR = path.join(SYSTEM_DIR, 'prompts');
+export const SETTINGS_DIR = path.join(SYSTEM_DIR, 'settings');
 export const JOBS_LOG = path.join(SYSTEM_DIR, 'jobs.jsonl');
 
 const list = (v?: string) =>
@@ -28,5 +29,8 @@ export const config = {
   ollamaUrl: (process.env.OLLAMA_URL || 'http://localhost:11434').replace(/\/$/, ''),
   ollamaModel: process.env.OLLAMA_MODEL || 'qwen3.8:latest',
   ollamaNumCtx: Number(process.env.OLLAMA_NUM_CTX || 32768),
+  ollamaApiKey: process.env.OLLAMA_API_KEY || '',
+  ollamaCloudUrl: (process.env.OLLAMA_CLOUD_URL || 'https://ollama.com').replace(/\/$/, ''),
+  ollamaCloudModel: process.env.OLLAMA_CLOUD_MODEL || 'gpt-oss:120b',
   isProd: process.env.NODE_ENV === 'production',
 };

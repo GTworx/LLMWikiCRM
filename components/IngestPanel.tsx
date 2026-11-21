@@ -12,6 +12,7 @@ interface Job {
   finishedAt?: string;
   error?: string;
   archivedTo?: string;
+  llm?: string;
   result?: { account: string; accountName: string; created: string[]; updated: string[]; skippedLocked: string[] };
 }
 
@@ -132,7 +133,10 @@ export function JobList({ editable, account }: { editable: boolean; account?: st
                   </>
                 ) : '—'}
               </td>
-              <td className="small muted">{new Date(j.finishedAt || j.createdAt).toLocaleString()}</td>
+              <td className="small muted">
+                {new Date(j.finishedAt || j.createdAt).toLocaleString()}
+                {j.llm && <div>{j.llm}</div>}
+              </td>
             </tr>
           ))}
         </tbody>
