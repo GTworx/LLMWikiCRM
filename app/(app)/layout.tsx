@@ -21,6 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <>
               <div className="sep">Admin</div>
               <Link href="/admin/users">Users</Link>
+              <Link href="/admin/llm">LLM provider</Link>
               <Link href="/admin/prompt">Extraction prompt</Link>
             </>
           )}

@@ -86,7 +86,7 @@ export const FIELDS: Record<Kind, FieldDef[]> = {
 };
 
 /** Fields maintained by the system; they are never locked and never shown as editable. */
-export const SYSTEM_FIELDS = new Set(['id', 'account', 'locked_fields', 'created', 'updated', 'last_activity', 'source_file', 'action_items', 'tasks', 'aliases']);
+export const SYSTEM_FIELDS = new Set(['id', 'account', 'locked_fields', 'created', 'updated', 'last_activity', 'source_file', 'action_items', 'tasks', 'aliases', 'extracted_by']);
 
 export interface ActionItem {
   id: string;

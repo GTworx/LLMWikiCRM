@@ -29,6 +29,7 @@ export interface Job {
   finishedAt?: string;
   error?: string;
   archivedTo?: string; // relative to DATA_DIR
+  llm?: string; // provider + model that did the extraction
   result?: { account: string; accountName: string; created: string[]; updated: string[]; skippedLocked: string[] };
 }
 
@@ -201,13 +202,16 @@ async function processFile(abs: string, job: Job): Promise<NonNullable<Job['resu
     .replaceAll('{{filename}}', path.basename(abs));
 
   const ex = await runExtraction(prompt, extracted.text);
+  job.llm = ex._model;
 
-  return writeLock().run(() => applyExtraction(ex, { hint, extracted, fileName: path.basename(abs), uploadedBy: job.uploadedBy }));
+  return writeLock().run(() =>
+    applyExtraction(ex, { hint, extracted, fileName: path.basename(abs), uploadedBy: job.uploadedBy, model: ex._model }),
+  );
 }
 
 async function applyExtraction(
   ex: Extraction,
-  ctx: { hint: string; extracted: Awaited<ReturnType<typeof extractText>>; fileName: string; uploadedBy?: string },
+  ctx: { hint: string; extracted: Awaited<ReturnType<typeof extractText>>; fileName: string; uploadedBy?: string; model: string },
 ) {
   invalidate();
   const recs = await allRecords(); // fresh: humans may have edited while the LLM was running
@@ -415,6 +419,7 @@ async function applyExtraction(
       sentiment: it.sentiment || 'neutral',
       participants: it.participants,
       source_file: ctx.fileName,
+      extracted_by: ctx.model,
       action_items: items,
       created: now,
       updated: now,

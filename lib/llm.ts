@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PROMPTS_DIR, config } from './config';
+import { activeEndpoint, type Endpoint } from './llm-settings';
 import { ACCOUNT_TYPES, CONTACT_ROLES, INTERACTION_KINDS, SENTIMENTS, STAGES } from './schema';
 
 export const PROMPT_FILE = path.join(PROMPTS_DIR, 'extraction.md');
@@ -104,29 +105,55 @@ export interface Extraction {
   purchases: { po_number: string; date: string; amount: number; currency: string; items: string[]; terms: string }[];
 }
 
-export async function runExtraction(system: string, content: string): Promise<Extraction> {
+/**
+ * Calls Ollama (local or cloud, per the admin's LLM settings) and returns parsed JSON.
+ * Local Ollama enforces `format`; Ollama Cloud accepts but doesn't enforce it, so the schema is also
+ * spelled out in the system prompt and the JSON object is extracted from the reply.
+ */
+export async function chatJson(ep: Endpoint, system: string, user: string, schema: object, timeoutMs = 15 * 60_000): Promise<any> {
+  const res = await fetch(`${ep.url}/api/chat`, {
+    method: 'POST',
+    headers: ep.headers,
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model: ep.model,
+      stream: false,
+      format: schema,
+      ...(ep.provider === 'local' ? { think: false } : {}),
+      options: ep.provider === 'local' ? { temperature: 0.1, num_ctx: config.ollamaNumCtx } : { temperature: 0.1 },
+      messages: [
+        {
+          role: 'system',
+          content: `${system}\n\nRespond with ONLY one JSON object matching this JSON Schema. No prose, no markdown fences.\n${JSON.stringify(schema)}`,
+        },
+        { role: 'user', content: user },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`${ep.label}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
+  const json = await res.json();
+  return parseJsonReply(String(json.message?.content || ''));
+}
+
+export function parseJsonReply(text: string): any {
+  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try {
+    return JSON.parse(t);
+  } catch {
+    const i = t.indexOf('{');
+    const j = t.lastIndexOf('}');
+    if (i >= 0 && j > i) return JSON.parse(t.slice(i, j + 1));
+    throw new Error(`Model did not return JSON: ${t.slice(0, 120)}`);
+  }
+}
+
+export async function runExtraction(system: string, content: string): Promise<Extraction & { _model: string }> {
+  const ep = await activeEndpoint();
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(`${config.ollamaUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        signal: AbortSignal.timeout(15 * 60_000),
-        body: JSON.stringify({
-          model: config.ollamaModel,
-          stream: false,
-          think: false,
-          format: EXTRACTION_SCHEMA,
-          options: { temperature: 0.1, num_ctx: config.ollamaNumCtx },
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: `Document content:\n\n${content}\n\nReturn the JSON extraction.` },
-          ],
-        }),
-      });
-      if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      const json = await res.json();
-      return normalise(JSON.parse(json.message?.content || '{}'));
+      const raw = await chatJson(ep, system, `Document content:\n\n${content}\n\nReturn the JSON extraction.`, EXTRACTION_SCHEMA);
+      return { ...normalise(raw), _model: ep.label };
     } catch (e) {
       lastErr = e;
     }
