@@ -3,6 +3,7 @@ import { INCOMING_DIR } from '@/lib/config';
 import { activeEndpoint } from '@/lib/llm-settings';
 import { canEdit } from '@/lib/schema';
 import { JobList, UploadBox } from '@/components/IngestPanel';
+import { SkillsPanel } from '@/components/Skills';
 
 export default async function IngestPage() {
   const user = await requirePageUser();
@@ -17,6 +18,14 @@ export default async function IngestPage() {
         </p>
       </div>
       <div className="stack">
+        <div className="card">
+          <h2>Skills</h2>
+          <p className="small muted">
+            Reusable actions saved from successful runs. A <b>prompt</b> skill fills the prompt box below; a <b>cohort week sync</b> adds a week
+            from the course&apos;s <code>data.json</code> to every participant — use it instead of uploading the week&apos;s transcript.
+          </p>
+          <SkillsPanel editable={canEdit(user)} />
+        </div>
         <div className="card"><UploadBox editable={canEdit(user)} staged /></div>
         <div className="card"><h2>Jobs</h2><JobList editable={canEdit(user)} /></div>
       </div>
