@@ -17,7 +17,7 @@ export default async function IngestPage() {
         </p>
       </div>
       <div className="stack">
-        <div className="card"><UploadBox editable={canEdit(user)} /></div>
+        <div className="card"><UploadBox editable={canEdit(user)} staged /></div>
         <div className="card"><h2>Jobs</h2><JobList editable={canEdit(user)} /></div>
       </div>
     </>
