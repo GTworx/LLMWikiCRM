@@ -8,10 +8,15 @@
 //     --name="Agentic AI Sooezy – Season 3"   course/account name (default: Agentic AI Sooezy – Season 2)
 //     --organizer="Gökhan Tenekecioglu (Organizer / Instructor)"   speaker to exclude from contacts
 //     --rep=you@company.com                   assigned rep (default: $ADMIN_EMAIL)
-//     --phase=a|b|all                         default: all
+//     --phase=a|b|all|sync                    default: all
+//     --weeks=6,7                             sync: weeks from data.json to add to an existing account
 //     --force                                 phase B: regenerate profiles that were already written
 // Example:
+//   node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --phase=sync --weeks=6
 //   node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --name="Agentic AI Sooezy – Season 2"
+// Sync adds new weeks to an already imported account: recomputes each participant's attendance, totals and
+// participation table over the imported weeks, creates contacts for newcomers (LLM profile via phase B logic),
+// writes the week's session page and refreshes the account's cohort stats. Locked fields are never touched.
 // Ollama: OLLAMA_URL / OLLAMA_MODEL env vars (defaults: http://localhost:11434, qwen3.8:latest).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +27,7 @@ import { randomBytes } from 'node:crypto';
 const positional = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const opt = (k, d) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 if (positional.length < 2) {
-  console.error('Usage: node scripts/import-course.mjs <dataDir> <courseRepoDir> [--name=...] [--organizer=...] [--rep=...] [--phase=a|b|all] [--force]');
+  console.error('Usage: node scripts/import-course.mjs <dataDir> <courseRepoDir> [--name=...] [--organizer=...] [--rep=...] [--phase=a|b|all|sync] [--weeks=6,7] [--force]');
   process.exit(1);
 }
 const [dataDir, courseRepo] = positional.map((p) => path.resolve(p));
@@ -189,6 +194,89 @@ function phaseA() {
   console.log(`Phase A: account + ${people.length} contacts + ${weeks.length} sessions + ${reports.length} reports written and committed.`);
 }
 
+
+// ------------------------------------------------------------------ Sync (add weeks to an existing account)
+const isLocked = (d, f) => Array.isArray(d.locked_fields) && d.locked_fields.includes(f);
+const setField = (d, f, v) => { if (!isLocked(d, f)) d[f] = v; };
+const sessionRel = (w) => `accounts/${ACC}/interactions/${weekDate[w] || '0000-00-00'}-week-${w}-session.md`;
+
+function participationTable(p, inc, attended, segs, words) {
+  const rows = inc.map((w) => `| Week ${w} | ${attended.includes(w) ? '✅' : '—'} | ${data.weeks[w].segments[p] || 0} | ${data.weeks[w].words[p] || 0} |`).join('\n');
+  return `## Participation\n\n| Session | Attended | Segments | Words |\n|---|---|---|---|\n${rows}\n| **Total** | **${attended.length}/${inc.length}** | **${segs}** | **${words}** |\n\n`;
+}
+
+async function phaseSync() {
+  const accRel = `accounts/${ACC}/_index.md`;
+  if (!fs.existsSync(path.join(dataDir, accRel))) throw new Error(`Account ${ACC} does not exist — run phase a first`);
+  const add = String(opt('weeks', '')).split(',').map((w) => w.trim()).filter(Boolean);
+  if (!add.length) throw new Error('--weeks=… is required for sync');
+  for (const w of add) if (!data.weeks[w]) throw new Error(`Week ${w} is not in data.json`);
+  const sessions = fs.readdirSync(path.join(accDir, 'interactions')).map((f) => f.match(/-week-(\d+)-session\.md$/)?.[1]).filter(Boolean);
+  const inc = [...new Set([...sessions, ...add])].sort((a, b) => Number(a) - Number(b));
+  const fresh = add.filter((w) => !sessions.includes(w));
+  console.log(`Sync: weeks now ${inc.join(', ')} (new: ${fresh.join(', ') || 'none'})`);
+
+  const inWeeks = (p) => inc.some((w) => data.weeks[w].attendees.includes(p) || (data.weeks[w].segments[p] || 0) > 0);
+  const created = [];
+  let updated = 0;
+  for (const p of people.filter(inWeeks)) {
+    const rel = `accounts/${ACC}/contacts/${contactSlug[p]}.md`;
+    const abs = path.join(dataDir, rel);
+    const attended = inc.filter((w) => data.weeks[w].attendees.includes(p) || (data.weeks[w].segments[p] || 0) > 0);
+    const segs = inc.reduce((n, w) => n + (data.weeks[w].segments[p] || 0), 0);
+    const words = inc.reduce((n, w) => n + (data.weeks[w].words[p] || 0), 0);
+    const exists = fs.existsSync(abs);
+    const { data: d, body } = exists
+      ? parse(fs.readFileSync(abs, 'utf8'))
+      : { data: { id: `contact_${id()}`, account: ACC, name: p, title: `Participant – ${COURSE}`, email: '', phone: '', influence: INFLUENCE[roles[p]] || 'user', participation_level: roles[p] || 'Active Listener / Observer', created: now, locked_fields: [] },
+          body: `# ${p}\n\nParticipant in **${COURSE}**. Participation level: **${roles[p] || 'Active Listener / Observer'}**.\n\n## Participation\n\n## Profile\n\n_Pending LLM enrichment._\n` };
+    const level = d.participation_level || 'Active Listener / Observer';
+    const before = JSON.stringify([d.weeks_attended, d.total_segments, d.total_words, d.notes]);
+    setField(d, 'weeks_attended', attended.map(Number));
+    setField(d, 'total_segments', segs);
+    setField(d, 'total_words', words);
+    setField(d, 'notes', `${level}. Attended ${attended.length}/${inc.length} sessions; ${words} words spoken.`);
+    if (attended.length) setField(d, 'last_contacted', weekDate[attended.at(-1)] || d.last_contacted || '');
+    const nextBody = isLocked(d, '_body') ? body : body.replace(/## Participation\n[\s\S]*?(?=## Profile)/, participationTable(p, inc, attended, segs, words));
+    if (exists && before === JSON.stringify([d.weeks_attended, d.total_segments, d.total_words, d.notes]) && nextBody === body) continue;
+    d.updated = now;
+    write(rel, d, nextBody);
+    if (exists) updated++;
+    else created.push(p);
+  }
+
+  const link = (n) => (contactSlug[n] ? `[${n}](../contacts/${contactSlug[n]}.md)` : n);
+  for (const w of fresh) {
+    const wk = data.weeks[w];
+    const speakers = Object.entries(wk.words).sort((a, b) => b[1] - a[1]);
+    write(
+      sessionRel(w),
+      { id: `interaction_${id()}`, account: ACC, title: `Week ${w} session`, kind: 'meeting', date: weekDate[w] || '', sentiment: 'neutral', participants: wk.attendees, source_file: 'data.json', date_note: 'Approximate: taken from the transcript file date', action_items: [], created: now, updated: now, locked_fields: [] },
+      `# Week ${w} session\n\n**Date:** ${weekDate[w] || 'unknown'} (approximate) · **Type:** meeting · **Attendees:** ${wk.attendees.length}\n\n## Attendees\n\n${wk.attendees.map((a) => `- ${link(a)}`).join('\n')}\n\n## Speaking\n\n| Speaker | Segments | Words |\n|---|---|---|\n${speakers.map(([n, words]) => `| ${link(n)} | ${wk.segments[n]} | ${words} |`).join('\n')}\n\n## Source files\n\n${wk.files.map((f) => `- \`${f}\``).join('\n')}\n`,
+    );
+  }
+
+  const { data: a, body: ab } = parse(fs.readFileSync(path.join(dataDir, accRel), 'utf8'));
+  const all = fs.readdirSync(path.join(accDir, 'contacts')).filter((f) => f.endsWith('.md')).length;
+  const core = people.filter((p) => inc.every((w) => data.weeks[w].attendees.includes(p) || (data.weeks[w].segments[p] || 0) > 0)).length;
+  setField(a, 'sessions', inc.length);
+  setField(a, 'participants', all);
+  const last = weekDate[inc.at(-1)];
+  if (last && String(a.last_activity || '') < last) setField(a, 'last_activity', last);
+  a.updated = now;
+  const nextAb = isLocked(a, '_body')
+    ? ab
+    : ab
+        .replace(/- \*\*Participants:\*\* \d+/, `- **Participants:** ${all}`)
+        .replace(/- \*\*Sessions so far:\*\* \d+/, `- **Sessions so far:** ${inc.length}`)
+        .replace(/- \*\*Attended every session:\*\* \d+/, `- **Attended every session:** ${core}`)
+        .replace(/- \*\*Attendance per week:\*\* .*/, `- **Attendance per week:** ${inc.map((w) => `W${w}: ${data.weeks[w].attendees.length}`).join(' · ')}`);
+  write(accRel, a, nextAb);
+  commit(`import: sync ${COURSE} week(s) ${add.join(', ')} from data.json`, 'Data Import', 'import@crm.local');
+  console.log(`Sync: ${updated} participants updated, ${created.length} created${created.length ? ` (${created.join(', ')})` : ''}, ${fresh.length} session page(s) written. Committed.`);
+  return created;
+}
+
 // ------------------------------------------------------------------ Phase B
 async function ollama(system, user, schema) {
   const res = await fetch(`${OLLAMA}/api/chat`, {
@@ -235,22 +323,23 @@ const PROFILE_SCHEMA = {
   required: ['profile', 'interests', 'projects', 'location', 'notable_quote', 'next_step'],
 };
 
-async function phaseB() {
+async function phaseB(only) {
   const sys = `You write CRM contact profiles for participants of the "${COURSE}" bootcamp run by ${ORGANIZER.replace(/\s*\(.*\)$/, '')}.
 Use ONLY facts in the provided report excerpts and stats. Never invent employers, job titles, projects or locations; use "" or [] when unknown.
 profile: 2-4 sentences in English about how this person engaged (attendance, contributions, topics). interests/projects: short phrases.
 Refer to the person by name or with they/them. Never use he/she/his/her — gender is unknown.
 Quote numbers exactly as given in the stats (segments, words, sessions); do not restate them differently.
 notable_quote: a short quote by them if one appears verbatim in the excerpts, else "". next_step: one concrete follow-up the instructor could take with them.`;
+  const todo = only || people.filter((p) => fs.existsSync(path.join(dataDir, `accounts/${ACC}/contacts/${contactSlug[p]}.md`)));
   let i = 0;
-  for (const p of people) {
+  for (const p of todo) {
     i++;
     const rel = `accounts/${ACC}/contacts/${contactSlug[p]}.md`;
     const { data: d, body } = parse(fs.readFileSync(path.join(dataDir, rel), 'utf8'));
     const force = process.argv.includes('--force');
-    if (!force && !body.includes('_Pending LLM enrichment._')) { console.log(`[${i}/${people.length}] ${p}: already enriched`); continue; }
+    if (!force && !body.includes('_Pending LLM enrichment._')) { console.log(`[${i}/${todo.length}] ${p}: already enriched`); continue; }
     const ctx = mentions(p);
-    const stats = `Name: ${p}\nParticipation level: ${d.participation_level}\nSessions attended: weeks ${d.weeks_attended.join(', ') || 'none recorded'} (${d.weeks_attended.length} of ${weeks.length})\nTotal speaking segments: ${d.total_segments}\nTotal words spoken: ${d.total_words}`;
+    const stats = `Name: ${p}\nParticipation level: ${d.participation_level}\nSessions attended: weeks ${d.weeks_attended.join(', ') || 'none recorded'} (${d.weeks_attended.length} of ${sessionCount()})\nTotal speaking segments: ${d.total_segments}\nTotal words spoken: ${d.total_words}`;
     const t0 = Date.now();
     const r = await ollama(sys, `${stats}\n\nReport excerpts mentioning ${p}:\n${ctx || '(no mentions in the reports)'}`, PROFILE_SCHEMA);
     const list = (xs) => { const v = (xs || []).map((x) => String(x).trim()).filter(Boolean); return v.length ? v.map((x) => `- ${x}`).join('\n') : '_None recorded._'; };
@@ -264,7 +353,7 @@ notable_quote: a short quote by them if one appears verbatim in the excerpts, el
     ].filter(Boolean).join('\n\n');
     d.updated = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     write(rel, d, body.replace(/## Profile[\s\S]*$/, profile + '\n'));
-    console.log(`[${i}/${people.length}] ${p}: done in ${((Date.now() - t0) / 1000).toFixed(0)}s (${ctx ? ctx.split('\n').length : 0} excerpts)`);
+    console.log(`[${i}/${todo.length}] ${p}: done in ${((Date.now() - t0) / 1000).toFixed(0)}s (${ctx ? ctx.split('\n').length : 0} excerpts)`);
   }
 
   // Account summary + next best action from the overview reports.
@@ -285,5 +374,11 @@ notable_quote: a short quote by them if one appears verbatim in the excerpts, el
   console.log('Phase B committed.');
 }
 
+const sessionCount = () => fs.readdirSync(path.join(accDir, 'interactions')).filter((f) => /-week-\d+-session\.md$/.test(f)).length;
+
+if (phase === 'sync') {
+  const created = await phaseSync();
+  if (created.length) await phaseB(created);
+}
 if (phase === 'a' || phase === 'all') phaseA();
 if (phase === 'b' || phase === 'all') await phaseB();
