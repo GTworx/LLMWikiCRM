@@ -54,6 +54,14 @@ node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --name="Agentic 
 
 `--phase=a` runs only the exact import, and `--phase=b` runs only the LLM profiles. `--force` regenerates profiles that were already written. The script refuses to run if the account already exists.
 
+**Adding new weeks.** After the course repo's `data.json` has been rebuilt with new sessions, add them to the existing account:
+
+```bash
+node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --phase=sync --weeks=6
+```
+
+This recomputes every participant's attendance, totals and participation table over the imported weeks, writes the new session pages, refreshes the account's cohort stats, and creates (and profiles) contacts for newcomers. Locked fields are left alone. Use this rather than uploading the week's transcript on the Ingest page: general ingestion extracts generic CRM facts and doesn't know the cohort's attendance fields or the participants' full names.
+
 ## Limitations
 
 - Single-process: the job queue, rate limits and used-token list live in memory. Run one instance.
