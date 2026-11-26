@@ -30,6 +30,7 @@ export interface Job {
   error?: string;
   archivedTo?: string; // relative to DATA_DIR
   llm?: string; // provider + model that did the extraction
+  instructions?: string; // extra prompt the user wrote for this upload
   result?: { account: string; accountName: string; created: string[]; updated: string[]; skippedLocked: string[] };
 }
 
@@ -38,11 +39,12 @@ interface State {
   pending: string[]; // absolute paths
   queued: Set<string>;
   uploader: Map<string, string>;
+  instructions: Map<string, string>;
   running: boolean;
   loaded: boolean;
 }
 const st = () =>
-  singleton<State>('ingest', () => ({ jobs: [], pending: [], queued: new Set(), uploader: new Map(), running: false, loaded: false }));
+  singleton<State>('ingest', () => ({ jobs: [], pending: [], queued: new Set(), uploader: new Map(), instructions: new Map(), running: false, loaded: false }));
 
 export async function loadJobHistory() {
   const s = st();
@@ -56,6 +58,10 @@ export async function loadJobHistory() {
 
 export const listJobs = () => [...st().jobs].reverse().slice(0, 200);
 export const rememberUploader = (abs: string, email: string) => st().uploader.set(abs, email);
+/** Extra extraction instructions for one uploaded file, appended to the system prompt when it is processed. */
+export const rememberInstructions = (abs: string, text: string) => {
+  if (text.trim()) st().instructions.set(abs, text.trim());
+};
 
 export function enqueue(abs: string) {
   const s = st();
@@ -67,6 +73,7 @@ export function enqueue(abs: string) {
     file: path.relative(INCOMING_DIR, abs).split(path.sep).join('/'),
     status: 'queued',
     uploadedBy: s.uploader.get(abs),
+    instructions: s.instructions.get(abs),
     createdAt: nowIso(),
   });
   s.pending.push(abs);
@@ -100,6 +107,7 @@ async function pump() {
         job.finishedAt = nowIso();
         s.queued.delete(abs);
         s.uploader.delete(abs);
+        s.instructions.delete(abs);
         await fs.appendFile(JOBS_LOG, JSON.stringify(job) + '\n').catch(() => {});
       }
     }
@@ -125,6 +133,8 @@ export async function retryJob(id: string) {
   const from = path.join(DATA_DIR, job.archivedTo);
   const to = path.join(INCOMING_DIR, job.file);
   await fs.mkdir(path.dirname(to), { recursive: true });
+  if (job.uploadedBy) rememberUploader(to, job.uploadedBy);
+  if (job.instructions) rememberInstructions(to, job.instructions);
   await fs.rename(from, to);
   job.error = `${job.error} (retried)`;
   job.archivedTo = undefined;
@@ -201,7 +211,10 @@ async function processFile(abs: string, job: Job): Promise<NonNullable<Job['resu
     .replaceAll('{{hint}}', hint || '(none)')
     .replaceAll('{{filename}}', path.basename(abs));
 
-  const ex = await runExtraction(prompt, extracted.text);
+  const system = job.instructions
+    ? `${prompt}\nAdditional instructions from the user for this ingestion (follow them, as long as they don't contradict the extraction rules or the JSON format):\n${job.instructions}\n`
+    : prompt;
+  const ex = await runExtraction(system, extracted.text);
   job.llm = ex._model;
 
   return writeLock().run(() =>

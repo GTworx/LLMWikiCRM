@@ -3,7 +3,7 @@ import path from 'node:path';
 import { apiError, HttpError, requireApiUser } from '@/lib/auth';
 import { INCOMING_DIR } from '@/lib/config';
 import { SUPPORTED } from '@/lib/extract-text';
-import { listJobs, rememberUploader } from '@/lib/ingest';
+import { listJobs, rememberInstructions, rememberUploader } from '@/lib/ingest';
 import { canSeeAccount } from '@/lib/store';
 import { slugify } from '@/lib/util';
 
@@ -30,12 +30,17 @@ export async function POST(req: Request) {
     await fs.mkdir(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const written: string[] = [];
+    const instructions = String(form.get('instructions') || '').slice(0, 8000);
+    const remember = (abs: string) => {
+      rememberUploader(abs, u.email);
+      rememberInstructions(abs, instructions);
+    };
 
     const text = String(form.get('text') || '').trim();
     if (text) {
       const name = `${stamp}-${slugify(String(form.get('title') || 'note'), 40)}.txt`;
       written.push(path.join(dir, name));
-      rememberUploader(written.at(-1)!, u.email);
+      remember(written.at(-1)!);
       await fs.writeFile(written.at(-1)!, text);
     }
     for (const f of form.getAll('files')) {
@@ -45,7 +50,7 @@ export async function POST(req: Request) {
       if (f.size > MAX_BYTES) throw new HttpError(400, `${f.name}: larger than 25 MB`);
       const base = slugify(path.basename(f.name, ext), 60);
       const abs = path.join(dir, `${stamp}-${base}${ext}`);
-      rememberUploader(abs, u.email);
+      remember(abs);
       await fs.writeFile(abs, Buffer.from(await f.arrayBuffer()));
       written.push(abs);
     }
