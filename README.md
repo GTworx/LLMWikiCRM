@@ -62,6 +62,15 @@ node scripts/import-course.mjs ./MyCRM ../AgenticAISooezySezon2 --phase=sync --w
 
 This recomputes every participant's attendance, totals and participation table over the imported weeks, writes the new session pages, refreshes the account's cohort stats, and creates (and profiles) contacts for newcomers. Locked fields are left alone. Use this rather than uploading the week's transcript on the Ingest page: general ingestion extracts generic CRM facts and doesn't know the cohort's attendance fields or the participants' full names.
 
+CLI sync runs are logged to `.system/jobs.jsonl`, so they appear in **Ingest → Jobs** after the app restarts. From there you can save the run as a skill and do the next weeks from the UI (see below).
+
+## Skills
+
+A **skill** is a reusable action saved from a successful run with **Save as skill** in **Ingest → Jobs**. Skills are stored as markdown in `.system/skills/` and every change is a commit.
+
+- **Prompt skill**, from an upload that had a prompt: **Use** fills the prompt box on the Ingest page.
+- **Cohort week sync**, from a cohort sync run (admins only): pick a week from the course's `data.json` and click **Run**. It runs the sync above in the background as a job. Newcomer profiles use the local Ollama model.
+
 ## Limitations
 
 - Single-process: the job queue, rate limits and used-token list live in memory. Run one instance.

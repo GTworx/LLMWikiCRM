@@ -377,8 +377,27 @@ notable_quote: a short quote by them if one appears verbatim in the excerpts, el
 const sessionCount = () => fs.readdirSync(path.join(accDir, 'interactions')).filter((f) => /-week-\d+-session\.md$/.test(f)).length;
 
 if (phase === 'sync') {
+  const before = git('rev-parse', 'HEAD').trim();
+  const startedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const created = await phaseSync();
   if (created.length) await phaseB(created);
+  // Runs started from the app are logged by the app; log CLI runs so they show in Ingest → Jobs (and can be saved as a skill).
+  if (!process.env.CRM_APP_RUN) {
+    const changes = git('diff', '--name-status', before, 'HEAD').trim().split('\n').filter(Boolean);
+    const files = (st) => changes.filter((l) => l.startsWith(st)).map((l) => l.split('\t').at(-1));
+    const weeksArg = String(opt('weeks', '')).split(',').map((w) => w.trim()).filter(Boolean);
+    const { data: idx } = parse(fs.readFileSync(path.join(accDir, '_index.md'), 'utf8'));
+    const job = {
+      id: randomBytes(5).toString('hex'), kind: 'sync', file: `Cohort sync (CLI): week ${weeksArg.join(', ')}`, status: 'done',
+      uploadedBy: process.env.ADMIN_EMAIL || undefined, createdAt: startedAt, startedAt,
+      params: { courseRepo, account: ACC, accountName: String(idx.name || COURSE), organizer: ORGANIZER, weeks: weeksArg },
+      result: { account: ACC, accountName: String(idx.name || COURSE), created: files('A'), updated: files('M'), skippedLocked: [] },
+      finishedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    };
+    fs.mkdirSync(path.join(dataDir, '.system'), { recursive: true });
+    fs.appendFileSync(path.join(dataDir, '.system', 'jobs.jsonl'), JSON.stringify(job) + '\n');
+    console.log('Logged to .system/jobs.jsonl (restart the app to see it in Ingest → Jobs).');
+  }
 }
 if (phase === 'a' || phase === 'all') phaseA();
 if (phase === 'b' || phase === 'all') await phaseB();

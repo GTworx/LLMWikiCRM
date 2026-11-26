@@ -19,8 +19,19 @@ import {
 } from './store';
 import { nowIso, shortId, singleton, slugify, today, writeLock } from './util';
 
+export interface SyncParams {
+  courseRepo: string; // absolute path of the course repo (reports/data.json)
+  account: string;
+  accountName: string;
+  organizer: string;
+  weeks: string[];
+}
+
 export interface Job {
   id: string;
+  kind?: 'ingest' | 'sync'; // missing = ingest (older log lines)
+  skill?: string; // name of the skill the run came from
+  params?: SyncParams;
   file: string; // relative to incoming/
   status: 'queued' | 'processing' | 'done' | 'failed';
   uploadedBy?: string;
@@ -55,6 +66,15 @@ export async function loadJobHistory() {
     s.jobs.push(...lines.map((l) => JSON.parse(l) as Job));
   } catch {}
 }
+
+/** Jobs that aren't file ingestion (e.g. cohort syncs) are added to the same list and log. */
+export function addJob(job: Job) {
+  st().jobs.push(job);
+}
+export async function saveJob(job: Job) {
+  await fs.appendFile(JOBS_LOG, JSON.stringify(job) + '\n').catch(() => {});
+}
+export const findJob = (id: string) => st().jobs.find((j) => j.id === id);
 
 export const listJobs = () => [...st().jobs].reverse().slice(0, 200);
 export const rememberUploader = (abs: string, email: string) => st().uploader.set(abs, email);

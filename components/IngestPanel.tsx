@@ -2,9 +2,12 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { SaveAsSkill, USE_SKILL_EVENT } from './Skills';
 
 interface Job {
   id: string;
+  kind?: 'ingest' | 'sync';
+  skill?: string;
   file: string;
   status: 'queued' | 'processing' | 'done' | 'failed';
   uploadedBy?: string;
@@ -32,10 +35,25 @@ export function UploadBox({ account, editable, compact = false, staged = false }
   const [text, setText] = useState('');
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [skillName, setSkillName] = useState('');
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const promptBox = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!staged) return;
+    const use = (e: Event) => {
+      const { name, instructions: text } = (e as CustomEvent<{ name: string; instructions: string }>).detail;
+      setInstructions(text);
+      setSkillName(name);
+      promptBox.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      promptBox.current?.focus();
+    };
+    window.addEventListener(USE_SKILL_EVENT, use);
+    return () => window.removeEventListener(USE_SKILL_EVENT, use);
+  }, [staged]);
 
   async function send(toSend: File[], pasted = '', prompt = '') {
     setBusy(true);
@@ -110,12 +128,17 @@ export function UploadBox({ account, editable, compact = false, staged = false }
             <label htmlFor="ingest-instructions">Your prompt for this ingestion (optional)</label>
             <textarea
               id="ingest-instructions"
+              ref={promptBox}
               rows={5}
               placeholder={PROMPT_HINT}
               value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
+              onChange={(e) => {
+                setInstructions(e.target.value);
+                setSkillName('');
+              }}
               maxLength={8000}
             />
+            {skillName && <div className="small ok">Using skill “{skillName}”</div>}
             <div className="small muted">
               Added to the extraction prompt for every file in this batch. The standard extraction rules and locked fields still apply.
             </div>
@@ -162,6 +185,10 @@ export function JobList({ editable, account }: { editable: boolean; account?: st
               <td className="small" style={{ overflowWrap: 'anywhere' }}>{j.file}</td>
               <td>
                 <span className={`badge ${STATUS[j.status]}`}>{j.status}{j.status === 'processing' ? '…' : ''}</span>
+                {j.kind === 'sync' && <div className="small muted">cohort sync</div>}
+                {editable && j.status === 'done' && (j.kind === 'sync' || j.instructions) && (
+                  <SaveAsSkill jobId={j.id} suggested={j.skill || (j.kind === 'sync' ? `${j.result?.accountName || 'Cohort'} week sync` : 'Ingest prompt')} />
+                )}
                 {j.status === 'failed' && (
                   <div className="small err" style={{ maxWidth: 280 }}>
                     {j.error}
